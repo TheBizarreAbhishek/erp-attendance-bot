@@ -83,36 +83,22 @@ const FormData = require('form-data');
             throw new Error(`Attendance frame not found. Available frames: ${urls}`);
         }
 
-        // ── Step 5: Select current month ──────────────────────────────────────
+        // ── Step 5: Select month and WAIT for frame to reload ─────────────────
+        // The dropdown has onchange="this.form.submit()" — need to wait for navigation
         const now = new Date();
         const monthValue = String(now.getMonth() + 1).padStart(2, '0');
         console.log(`📅 Selecting month: ${monthValue}`);
-        await attendanceFrame.selectOption('#months_01', monthValue);
-        await attendanceFrame.waitForLoadState('networkidle');
-        await attendanceFrame.waitForTimeout(2000);
+        await Promise.all([
+            attendanceFrame.waitForNavigation({ waitUntil: 'networkidle' }),
+            attendanceFrame.selectOption('#months_01', monthValue)
+        ]);
 
-        // ── Step 6: Wait for attendance TABLE frame to load ────────────────────
-        // After selectOption, the form submits and loads attendance_class.php
-        // in a new/updated frame — NOT the same step1 frame
-        console.log('⏳ Waiting for attendance table to load...');
-        await page.waitForTimeout(3000);
+        console.log('⏳ Month selected and frame reloaded');
 
-        // Log all frames so we can debug
-        const frameUrls = page.frames().map(f => f.url());
-        console.log('📌 Frames after month select:', frameUrls.join(' | '));
-
-        // Find the frame with the actual attendance table
-        const tableFrame = page.frames().find(f =>
-            f.url().includes('attendance_class') && !f.url().includes('step')
-        ) || page.frames().find(f =>
-            f.url().includes('attendance_class')
-        );
-
-        if (!tableFrame) {
-            console.log('❌ Table frame not found. Frames:', frameUrls.join(', '));
-            throw new Error('attendance_class frame not found after month selection');
-        }
+        // After POST, same frame (attendance_class_step1.php) now has the table
+        const tableFrame = attendanceFrame;
         console.log('✅ Table frame:', tableFrame.url());
+
 
         // ── Step 7: Parse legend from TABLE frame ─────────────────────────────
         // Split on ' - ' per LINE. The legend is one big <td> with all entries.
