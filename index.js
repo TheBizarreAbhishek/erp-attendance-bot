@@ -91,12 +91,34 @@ const FormData = require('form-data');
         await attendanceFrame.waitForLoadState('networkidle');
         await attendanceFrame.waitForTimeout(2000);
 
-        // ── Step 6: Parse legend (BAS-202 - Engg. Chemistry) ──────────────────
+        // ── Step 6: Wait for attendance TABLE frame to load ────────────────────
+        // After selectOption, the form submits and loads attendance_class.php
+        // in a new/updated frame — NOT the same step1 frame
+        console.log('⏳ Waiting for attendance table to load...');
+        await page.waitForTimeout(3000);
+
+        // Log all frames so we can debug
+        const frameUrls = page.frames().map(f => f.url());
+        console.log('📌 Frames after month select:', frameUrls.join(' | '));
+
+        // Find the frame with the actual attendance table
+        const tableFrame = page.frames().find(f =>
+            f.url().includes('attendance_class') && !f.url().includes('step')
+        ) || page.frames().find(f =>
+            f.url().includes('attendance_class')
+        );
+
+        if (!tableFrame) {
+            console.log('❌ Table frame not found. Frames:', frameUrls.join(', '));
+            throw new Error('attendance_class frame not found after month selection');
+        }
+        console.log('✅ Table frame:', tableFrame.url());
+
+        // ── Step 7: Parse legend from TABLE frame ─────────────────────────────
         // Split on ' - ' per LINE. The legend is one big <td> with all entries.
-        const legendMap = await attendanceFrame.evaluate(() => {
+        const legendMap = await tableFrame.evaluate(() => {
             const map = {};
             document.querySelectorAll('td').forEach(td => {
-                // Split cell content by newlines to handle multi-line legend cells
                 const lines = td.innerText.trim().split('\n');
                 lines.forEach(line => {
                     const text = line.trim();
@@ -104,7 +126,6 @@ const FormData = require('form-data');
                     if (idx > 0 && idx < 20) {
                         const code = text.substring(0, idx).trim();
                         const name = text.substring(idx + 3).trim();
-                        // Validate: no spaces, has letters AND digits (subject code pattern)
                         if (code && !/\s/.test(code) && /[A-Z]/.test(code) && /\d/.test(code)) {
                             map[code] = name;
                         }
@@ -115,20 +136,18 @@ const FormData = require('form-data');
         });
         console.log('📚 Legend:', JSON.stringify(legendMap));
 
-        // ── Step 7: Find today's column ──────────────────────────────────────
+        // ── Step 8: Find today's column in table frame headers ────────────────
         const today = now.getDate().toString();
         console.log(`🔍 Looking for date column: ${today}`);
 
-        // Target ATTENDANCE data table (not the month-select form table)
-        const attendTable = await attendanceFrame.$('table.table-striped, #divToPrint table, table.table-bordered');
-        const firstRow = attendTable ? await attendTable.$('tr') : null;
-        const headers = firstRow ? await firstRow.$$('th, td') : [];
+        const headers = await tableFrame.$$('th');
         console.log(`📊 Header count: ${headers.length}`);
         if (headers.length > 0) {
             const h0 = (await headers[0].textContent()).trim().replace(/\s+/g, ' ');
             const hLast = (await headers[headers.length - 1].textContent()).trim().replace(/\s+/g, ' ');
             console.log(`  First: "${h0}" | Last: "${hLast}"`);
         }
+
         let todayColIndex = -1;
         let todayHeaderText = '';
 
@@ -148,8 +167,8 @@ const FormData = require('form-data');
         }
         console.log(`✅ Today col index: ${todayColIndex}, header: "${todayHeaderText}"`);
 
-        // Get data rows (skip first header row)
-        const allRows = attendTable ? await attendTable.$$('tr') : [];
+        // Get data rows from table frame (skip first header row)
+        const allRows = await tableFrame.$$('tr');
         const dataRows = allRows.slice(1);
         const absentSubjects = [];
 
