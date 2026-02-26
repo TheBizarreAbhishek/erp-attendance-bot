@@ -92,21 +92,24 @@ const FormData = require('form-data');
         await attendanceFrame.waitForTimeout(2000);
 
         // ── Step 6: Parse legend (BAS-202 - Engg. Chemistry) ──────────────────
-        // Split on ' - ' (space dash space). Works for PDP25-26 too.
+        // Split on ' - ' per LINE. The legend is one big <td> with all entries.
         const legendMap = await attendanceFrame.evaluate(() => {
             const map = {};
             document.querySelectorAll('td').forEach(td => {
-                const text = td.innerText.trim();
-                const idx = text.indexOf(' - ');
-                // Code is short (e.g. BAS-202), separator at a reasonable position
-                if (idx > 0 && idx < 20) {
-                    const code = text.substring(0, idx).trim();
-                    const name = text.substring(idx + 3).trim();
-                    // Must look like a subject code: letters + digits/hyphens, no spaces
-                    if (code && !/\s/.test(code) && /[A-Z]/.test(code) && /\d/.test(code)) {
-                        map[code] = name;
+                // Split cell content by newlines to handle multi-line legend cells
+                const lines = td.innerText.trim().split('\n');
+                lines.forEach(line => {
+                    const text = line.trim();
+                    const idx = text.indexOf(' - ');
+                    if (idx > 0 && idx < 20) {
+                        const code = text.substring(0, idx).trim();
+                        const name = text.substring(idx + 3).trim();
+                        // Validate: no spaces, has letters AND digits (subject code pattern)
+                        if (code && !/\s/.test(code) && /[A-Z]/.test(code) && /\d/.test(code)) {
+                            map[code] = name;
+                        }
                     }
-                }
+                });
             });
             return map;
         });
@@ -116,8 +119,15 @@ const FormData = require('form-data');
         const today = now.getDate().toString();
         console.log(`🔍 Looking for date column: ${today}`);
 
-        // ERP table has no <thead> — headers are th elements in first tr of tbody
-        const headers = await attendanceFrame.$$('table tr:first-child th');
+        // ERP table uses <td> not <th> for headers — get first row's all cells
+        const firstRow = await attendanceFrame.$('table tr');
+        const headers = firstRow ? await firstRow.$$('th, td') : [];
+        console.log(`📊 Header count: ${headers.length}`);
+        if (headers.length > 0) {
+            const h0 = (await headers[0].textContent()).trim();
+            const hLast = (await headers[headers.length - 1].textContent()).trim();
+            console.log(`  First: "${h0}" | Last: "${hLast}"`);
+        }
         let todayColIndex = -1;
         let todayHeaderText = '';
 
@@ -167,9 +177,9 @@ const FormData = require('form-data');
         const timeStr = now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
         if (absentSubjects.length === 0) {
-            console.log('🎉 All present today! No notification needed.');
-            // Uncomment below for a daily "all present" ping:
-            // await sendTelegramMessage(`✅ All Present!\n\n📅 ${todayHeaderText}\n🕐 ${timeStr}`);
+            console.log('🎉 All present today!');
+            // Always notify so user can confirm bot is working
+            await sendTelegramMessage(`✅ <b>All Present!</b>\n\n📅 <b>Date:</b> ${todayHeaderText}\n🕐 <b>Checked:</b> ${timeStr}\n\nKoi bhi subject mein absent nahi ho 🎉`);
         } else {
             const message =
                 `⚠️ <b>ATTENDANCE ALERT</b> 🚨
