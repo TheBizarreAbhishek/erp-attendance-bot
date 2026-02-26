@@ -92,13 +92,20 @@ const FormData = require('form-data');
         await attendanceFrame.waitForTimeout(2000);
 
         // ── Step 6: Parse legend (BAS-202 - Engg. Chemistry) ──────────────────
+        // Split on ' - ' (space dash space). Works for PDP25-26 too.
         const legendMap = await attendanceFrame.evaluate(() => {
             const map = {};
             document.querySelectorAll('td').forEach(td => {
                 const text = td.innerText.trim();
-                const match = text.match(/^([A-Z]{2,}[\w-]+-?\d+[a-zA-Z0-9]*)\s*[-–]\s*(.+)$/);
-                if (match) {
-                    map[match[1].trim()] = match[2].trim();
+                const idx = text.indexOf(' - ');
+                // Code is short (e.g. BAS-202), separator at a reasonable position
+                if (idx > 0 && idx < 20) {
+                    const code = text.substring(0, idx).trim();
+                    const name = text.substring(idx + 3).trim();
+                    // Must look like a subject code: letters + digits/hyphens, no spaces
+                    if (code && !/\s/.test(code) && /[A-Z]/.test(code) && /\d/.test(code)) {
+                        map[code] = name;
+                    }
                 }
             });
             return map;
@@ -109,7 +116,8 @@ const FormData = require('form-data');
         const today = now.getDate().toString();
         console.log(`🔍 Looking for date column: ${today}`);
 
-        const headers = await attendanceFrame.$$('table thead th');
+        // ERP table has no <thead> — headers are th elements in first tr of tbody
+        const headers = await attendanceFrame.$$('table tr:first-child th');
         let todayColIndex = -1;
         let todayHeaderText = '';
 
