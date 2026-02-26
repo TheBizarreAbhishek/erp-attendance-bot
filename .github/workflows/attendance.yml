@@ -1,0 +1,55 @@
+name: ERP Attendance Check
+
+on:
+  # Runs at these times IST (UTC+5:30):
+  # 08:30 IST = 03:00 UTC
+  # 10:30 IST = 05:00 UTC
+  # 12:30 IST = 07:00 UTC
+  # 14:30 IST = 09:00 UTC
+  # 16:30 IST = 11:00 UTC
+  schedule:
+    - cron: '0 3 * * 1-6'   # 8:30 AM IST  (Mon-Sat)
+    - cron: '0 5 * * 1-6'   # 10:30 AM IST (Mon-Sat)
+    - cron: '0 7 * * 1-6'   # 12:30 PM IST (Mon-Sat)
+    - cron: '0 9 * * 1-6'   # 2:30 PM IST  (Mon-Sat)
+    - cron: '0 11 * * 1-6'  # 4:30 PM IST  (Mon-Sat)
+
+  # Allows manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  check-attendance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Run attendance check
+        env:
+          ERP_USERNAME: ${{ secrets.ERP_USERNAME }}
+          ERP_PASSWORD: ${{ secrets.ERP_PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: node index.js
+
+      - name: Upload screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attendance-screenshot
+          path: attendance.png
+          if-no-files-found: ignore

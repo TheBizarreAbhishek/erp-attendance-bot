@@ -1,0 +1,15 @@
+{
+  "name": "erp-attendance-bot",
+  "version": "1.0.0",
+  "description": "ERP Attendance Telegram notifier bot for BBS College",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.7.0",
+    "playwright": "^1.41.0"
+  }
+}
