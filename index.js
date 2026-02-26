@@ -119,13 +119,14 @@ const FormData = require('form-data');
         const today = now.getDate().toString();
         console.log(`🔍 Looking for date column: ${today}`);
 
-        // ERP table uses <td> not <th> for headers — get first row's all cells
-        const firstRow = await attendanceFrame.$('table tr');
+        // Target ATTENDANCE data table (not the month-select form table)
+        const attendTable = await attendanceFrame.$('table.table-striped, #divToPrint table, table.table-bordered');
+        const firstRow = attendTable ? await attendTable.$('tr') : null;
         const headers = firstRow ? await firstRow.$$('th, td') : [];
         console.log(`📊 Header count: ${headers.length}`);
         if (headers.length > 0) {
-            const h0 = (await headers[0].textContent()).trim();
-            const hLast = (await headers[headers.length - 1].textContent()).trim();
+            const h0 = (await headers[0].textContent()).trim().replace(/\s+/g, ' ');
+            const hLast = (await headers[headers.length - 1].textContent()).trim().replace(/\s+/g, ' ');
             console.log(`  First: "${h0}" | Last: "${hLast}"`);
         }
         let todayColIndex = -1;
@@ -147,12 +148,12 @@ const FormData = require('form-data');
         }
         console.log(`✅ Today col index: ${todayColIndex}, header: "${todayHeaderText}"`);
 
-        // ── Step 8: Find absent subjects ──────────────────────────────────────
-        // A = single absent, AA = double period absent
-        const rows = await attendanceFrame.$$('table tbody tr');
+        // Get data rows (skip first header row)
+        const allRows = attendTable ? await attendTable.$$('tr') : [];
+        const dataRows = allRows.slice(1);
         const absentSubjects = [];
 
-        for (const row of rows) {
+        for (const row of dataRows) {
             const cells = await row.$$('td');
             if (cells.length <= todayColIndex) continue;
 
