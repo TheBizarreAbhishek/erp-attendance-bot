@@ -154,13 +154,16 @@ const FormData = require('form-data');
 
         let todayColIndex = -1;
         let todayHeaderText = '';
+        const todayNum = parseInt(today);
 
         for (let i = 0; i < headers.length; i++) {
             const text = allHeaderTexts[i];
-            // Match day number: "26 Feb", "26\nFeb" — day at start
-            if (new RegExp(`^${today}\\b`).test(text)) {
+            // Extract first number from header (handles "26 Feb", "26\nFri", "26-02" etc.)
+            const numMatch = text.match(/\d+/);
+            if (numMatch && parseInt(numMatch[0]) === todayNum) {
                 todayColIndex = i;
-                todayHeaderText = text.replace(/\s+/g, ' ').trim();
+                todayHeaderText = text;
+                console.log(`🎯 Found today column at index: ${i} → "${text}"`);
                 break;
             }
         }
@@ -170,7 +173,6 @@ const FormData = require('form-data');
             await browser.close();
             return;
         }
-        console.log(`✅ Today col index: ${todayColIndex}, header: "${todayHeaderText}"`);
 
         // Get data rows from table frame (skip first header row)
         const allRows = await tableFrame.$$('tr');
