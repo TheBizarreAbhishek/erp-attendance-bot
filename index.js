@@ -15,61 +15,106 @@ const FormData = require('form-data');
     const page = await context.newPage();
 
     try {
-        // ── Step 1: Login ──────────────────────────────────────────────────────────
+        // ── Step 1: Login ──────────────────────────────────────────────────────
         console.log('🔐 Logging in...');
         await page.goto('https://erp.bbs.ac.in/indexLogin.php', { waitUntil: 'domcontentloaded' });
         await page.fill('#login', process.env.ERP_USERNAME);
         await page.fill('#passwd', process.env.ERP_PASSWORD);
         await page.click('#btnSubmit');
+
+        // Wait until we land on index.php (confirms login success)
+        await page.waitForURL('**/students/index.php', { timeout: 20000 });
         await page.waitForLoadState('networkidle');
-        console.log('✅ Login successful');
+        await page.waitForTimeout(2000); // let all frames settle
+        console.log('✅ Login successful - on dashboard');
 
-        // ── Step 2: Go directly to attendance page ─────────────────────────────────
-        console.log('📋 Opening attendance page...');
-        await page.goto('https://erp.bbs.ac.in/students/attendance_class_step1.php', {
-            waitUntil: 'domcontentloaded'
-        });
+        // ── Step 2: Debug all frames loaded ───────────────────────────────────
+        const allFrameUrls = page.frames().map(f => f.url());
+        console.log('📌 Frames loaded:', allFrameUrls.join(' | '));
 
-        // ── Step 3: Select current month ───────────────────────────────────────────
+        // ── Step 3: Click "Attendance (%age)" in the left nav frame ───────────
+        let clickedAttendance = false;
+        for (const frame of page.frames()) {
+            try {
+                // Try text-based click
+                const link = frame.locator('a').filter({ hasText: /Attendance.*%age/i });
+                if (await link.count() > 0) {
+                    await link.first().click();
+                    clickedAttendance = true;
+                    console.log('📋 Clicked Attendance (%age) link in frame:', frame.url());
+                    break;
+                }
+            } catch (_) { }
+        }
+
+        if (!clickedAttendance) {
+            // Fallback: try original tree link IDs
+            for (const frame of page.frames()) {
+                try {
+                    if (await frame.locator('#tree-5-link').count() > 0) {
+                        await frame.click('#tree-5-link');
+                        await page.waitForTimeout(1000);
+                    }
+                    if (await frame.locator('#tree-10-link').count() > 0) {
+                        await frame.click('#tree-10-link');
+                        clickedAttendance = true;
+                        console.log('📋 Clicked via tree link IDs');
+                        break;
+                    }
+                } catch (_) { }
+            }
+        }
+
+        // Wait for the attendance frame to load
+        await page.waitForTimeout(3000);
+
+        // ── Step 4: Find the attendance content frame ──────────────────────────
+        let attendanceFrame = null;
+        for (const frame of page.frames()) {
+            if (frame.url().includes('attendance_class_step1')) {
+                attendanceFrame = frame;
+                console.log('✅ Found attendance frame:', frame.url());
+                break;
+            }
+        }
+
+        if (!attendanceFrame) {
+            const urls = page.frames().map(f => f.url()).join(', ');
+            throw new Error(`Attendance frame not found. Available frames: ${urls}`);
+        }
+
+        // ── Step 5: Select current month ──────────────────────────────────────
         const now = new Date();
         const monthValue = String(now.getMonth() + 1).padStart(2, '0');
         console.log(`📅 Selecting month: ${monthValue}`);
-        await page.selectOption('#months_01', monthValue);
-        await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(2000);
+        await attendanceFrame.selectOption('#months_01', monthValue);
+        await attendanceFrame.waitForLoadState('networkidle');
+        await attendanceFrame.waitForTimeout(2000);
 
-        // ── Step 4: Parse subject legend (BAS-202 - Engg. Chemistry) ──────────────
-        // Legend is at the bottom: "<code> - <full name>"
-        const legendItems = await page.$$eval(
-            '#divToPrint td, #divToPrint .printable td',
-            (cells) => {
-                const map = {};
-                cells.forEach(cell => {
-                    const text = cell.innerText.trim();
-                    // Match "BAS-202 - Engg. Chemistry" pattern
-                    const match = text.match(/^([A-Z]{2,}[\w-]+\d+)\s*[-–]\s*(.+)$/);
-                    if (match) {
-                        map[match[1].trim()] = match[2].trim();
-                    }
-                });
-                return map;
-            }
-        );
-        console.log('📚 Subject map:', legendItems);
+        // ── Step 6: Parse legend (BAS-202 - Engg. Chemistry) ──────────────────
+        const legendMap = await attendanceFrame.evaluate(() => {
+            const map = {};
+            document.querySelectorAll('td').forEach(td => {
+                const text = td.innerText.trim();
+                const match = text.match(/^([A-Z]{2,}[\w-]+-?\d+[a-zA-Z0-9]*)\s*[-–]\s*(.+)$/);
+                if (match) {
+                    map[match[1].trim()] = match[2].trim();
+                }
+            });
+            return map;
+        });
+        console.log('📚 Legend:', JSON.stringify(legendMap));
 
-        // ── Step 5: Find today's column index in thead ─────────────────────────────
+        // ── Step 7: Find today's column ──────────────────────────────────────
         const today = now.getDate().toString();
-        console.log(`🔍 Looking for date: ${today}`);
+        console.log(`🔍 Looking for date column: ${today}`);
 
-        const table = page.locator('table.table').first();
-        const headers = await table.locator('thead th').all();
-
+        const headers = await attendanceFrame.$$('table thead th');
         let todayColIndex = -1;
         let todayHeaderText = '';
 
         for (let i = 0; i < headers.length; i++) {
             const text = (await headers[i].textContent()).trim();
-            // Match "26\nFeb" or "26 Feb" — only the day number with word boundary
             if (new RegExp(`^\\s*${today}\\b`).test(text)) {
                 todayColIndex = i;
                 todayHeaderText = text.replace(/\s+/g, ' ').trim();
@@ -78,49 +123,45 @@ const FormData = require('form-data');
         }
 
         if (todayColIndex === -1) {
-            console.log(`⚠️ No column found for today (${today}). Maybe weekend or holiday.`);
+            console.log(`ℹ️ No column for today (${today}) — weekend or holiday.`);
             await browser.close();
             return;
         }
+        console.log(`✅ Today col index: ${todayColIndex}, header: "${todayHeaderText}"`);
 
-        console.log(`✅ Today's column: index=${todayColIndex}, header="${todayHeaderText}"`);
-
-        // ── Step 6: Check each subject row for absence ─────────────────────────────
-        // Cell values: P=Present, PP=Double Present, A=Absent, AA=Double Absent, -=No class
-        const rows = await table.locator('tbody tr').all();
+        // ── Step 8: Find absent subjects ──────────────────────────────────────
+        // A = single absent, AA = double period absent
+        const rows = await attendanceFrame.$$('table tbody tr');
         const absentSubjects = [];
 
         for (const row of rows) {
-            const cells = await row.locator('td').all();
+            const cells = await row.$$('td');
             if (cells.length <= todayColIndex) continue;
 
-            const subjectCode = (await cells[0].textContent()).trim();
-            // Skip summary/legend rows (e.g. "G. Total", empty rows)
-            if (!subjectCode || subjectCode.includes('Total') || subjectCode.includes('Legends')) continue;
+            const code = (await cells[0].textContent()).trim();
+            if (!code || code.includes('Total') || code.includes('Legend') || code.includes('G.')) continue;
 
             const cellText = (await cells[todayColIndex].textContent()).trim();
-            console.log(`  ${subjectCode}: "${cellText}"`);
+            console.log(`  ${code}: "${cellText}"`);
 
-            // A or AA = absent. 'A'.includes('A')=true, 'AA'.includes('A')=true
-            // P, PP, - all don't contain 'A'
-            if (cellText.includes('A')) {
-                const fullName = legendItems[subjectCode] || subjectCode;
-                absentSubjects.push(`${subjectCode} – ${fullName}`);
+            if (cellText.includes('A')) { // catches 'A' and 'AA'
+                const fullName = legendMap[code] || code;
+                absentSubjects.push(`${code} – ${fullName}`);
             }
         }
 
-        // ── Step 7: Screenshot ─────────────────────────────────────────────────────
+        // ── Step 9: Screenshot ─────────────────────────────────────────────────
         const screenshotPath = 'attendance.png';
         await page.screenshot({ path: screenshotPath, fullPage: true });
-        console.log('📸 Screenshot taken');
+        console.log('📸 Screenshot saved');
 
-        // ── Step 8: Notify ─────────────────────────────────────────────────────────
+        // ── Step 10: Notify ────────────────────────────────────────────────────
         const timeStr = now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
         if (absentSubjects.length === 0) {
-            console.log('🎉 All present today!');
-            // Uncomment to send a daily "all present" confirmation:
-            // await sendTelegramMessage(`✅ All Present on ${todayHeaderText}!\n\nChecked at ${timeStr}`);
+            console.log('🎉 All present today! No notification needed.');
+            // Uncomment below for a daily "all present" ping:
+            // await sendTelegramMessage(`✅ All Present!\n\n📅 ${todayHeaderText}\n🕐 ${timeStr}`);
         } else {
             const message =
                 `⚠️ <b>ATTENDANCE ALERT</b> 🚨
@@ -133,20 +174,15 @@ ${absentSubjects.map(s => `• ${s}`).join('\n')}`;
 
             console.log('📨 Sending Telegram alert...');
             await sendTelegramMessage(message);
-
-            console.log('🖼 Sending screenshot...');
             await sendTelegramPhoto(screenshotPath, `Attendance – ${todayHeaderText}`);
-
-            console.log('✅ Done! Notifications sent.');
+            console.log('✅ Notification sent!');
         }
 
     } catch (err) {
-        console.error('❌ Error:', err);
+        console.error('❌ Error:', err.message);
         try {
             const timeStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-            await sendTelegramMessage(
-                `🔴 <b>Bot Error!</b>\n\n${err.message}\n\n⏰ ${timeStr}\n\nCheck GitHub Actions logs.`
-            );
+            await sendTelegramMessage(`🔴 <b>Bot Error!</b>\n\n<code>${err.message}</code>\n\n⏰ ${timeStr}`);
         } catch (_) { }
         process.exit(1);
     } finally {
@@ -154,7 +190,7 @@ ${absentSubjects.map(s => `• ${s}`).join('\n')}`;
     }
 })();
 
-// ── Telegram Helpers ──────────────────────────────────────────────────────────
+// ── Telegram Helpers ────────────────────────────────────────────────────────
 
 async function sendTelegramMessage(text) {
     const res = await fetch(
@@ -162,14 +198,10 @@ async function sendTelegramMessage(text) {
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: process.env.TG_CHAT_ID,
-                text,
-                parse_mode: 'HTML'
-            })
+            body: JSON.stringify({ chat_id: process.env.TG_CHAT_ID, text, parse_mode: 'HTML' })
         }
     );
-    if (!res.ok) throw new Error(`Telegram sendMessage: ${await res.text()}`);
+    if (!res.ok) throw new Error(`sendMessage failed: ${await res.text()}`);
 }
 
 async function sendTelegramPhoto(photoPath, caption = '') {
@@ -177,10 +209,9 @@ async function sendTelegramPhoto(photoPath, caption = '') {
     form.append('chat_id', process.env.TG_CHAT_ID);
     form.append('photo', fs.createReadStream(photoPath));
     form.append('caption', caption);
-
     const res = await fetch(
         `https://api.telegram.org/bot${process.env.TG_BOT_TOKEN}/sendPhoto`,
         { method: 'POST', body: form }
     );
-    if (!res.ok) throw new Error(`Telegram sendPhoto: ${await res.text()}`);
+    if (!res.ok) throw new Error(`sendPhoto failed: ${await res.text()}`);
 }
