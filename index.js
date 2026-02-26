@@ -93,10 +93,18 @@ const FormData = require('form-data');
             attendanceFrame.selectOption('#months_01', monthValue)
         ]);
 
-        console.log('⏳ Month selected and frame reloaded');
+        console.log('⏳ Month selected - waiting for content frame to update...');
+        await page.waitForTimeout(3000);
 
-        // After POST, same frame (attendance_class_step1.php) now has the table
-        const tableFrame = attendanceFrame;
+        // The attendance table loads inside index1.php (content frame), not step1 form frame
+        const frameUrls2 = page.frames().map(f => f.url());
+        console.log('📌 Frames after select:', frameUrls2.join(' | '));
+
+        const tableFrame = page.frames().find(f => f.url().includes('index1.php'));
+
+        if (!tableFrame) {
+            throw new Error(`index1.php frame not found. Frames: ${frameUrls2.join(', ')}`);
+        }
         console.log('✅ Table frame:', tableFrame.url());
 
 
