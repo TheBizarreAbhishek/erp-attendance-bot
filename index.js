@@ -140,20 +140,25 @@ const FormData = require('form-data');
         const today = now.getDate().toString();
         console.log(`🔍 Looking for date column: ${today}`);
 
-        const headers = await tableFrame.$$('th');
+        // Get ALL cells in first row (th AND td) so column indices match data rows
+        const firstHeaderRow = await tableFrame.$('tr');
+        const headers = firstHeaderRow ? await firstHeaderRow.$$('th, td') : [];
         console.log(`📊 Header count: ${headers.length}`);
-        if (headers.length > 0) {
-            const h0 = (await headers[0].textContent()).trim().replace(/\s+/g, ' ');
-            const hLast = (await headers[headers.length - 1].textContent()).trim().replace(/\s+/g, ' ');
-            console.log(`  First: "${h0}" | Last: "${hLast}"`);
+
+        // Log ALL headers for debugging
+        const allHeaderTexts = [];
+        for (const h of headers) {
+            allHeaderTexts.push((await h.textContent()).trim().replace(/\s+/g, ' '));
         }
+        console.log('📋 Headers:', JSON.stringify(allHeaderTexts));
 
         let todayColIndex = -1;
         let todayHeaderText = '';
 
         for (let i = 0; i < headers.length; i++) {
-            const text = (await headers[i].textContent()).trim();
-            if (new RegExp(`^\\s*${today}\\b`).test(text)) {
+            const text = allHeaderTexts[i];
+            // Match day number: "26 Feb", "26\nFeb" — day at start
+            if (new RegExp(`^${today}\\b`).test(text)) {
                 todayColIndex = i;
                 todayHeaderText = text.replace(/\s+/g, ' ').trim();
                 break;
